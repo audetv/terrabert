@@ -15,6 +15,10 @@ logging.basicConfig(
     ]
 )
 
+# Проверка доступности GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logging.info(f"Используется устройство: {device}")
+
 # 1. Чтение файлов и создание корпуса
 def create_corpus(input_folder, output_file):
     """
@@ -118,6 +122,7 @@ def train_model(tokenizer, corpus_file, num_epochs=3, batch_size=8, max_seq_leng
         intermediate_size=3072
     )
     model = BertForMaskedLM(config)
+    model.to(device)  # Перенос модели на GPU
 
     # Оптимизатор и функция потерь
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -133,8 +138,10 @@ def train_model(tokenizer, corpus_file, num_epochs=3, batch_size=8, max_seq_leng
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{num_epochs}", leave=False)
         for batch in progress_bar:
             optimizer.zero_grad()
-            input_ids = batch["input_ids"]
-            attention_mask = batch["attention_mask"]
+
+            # Перенос данных на GPU
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
 
             # Прямой проход
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
