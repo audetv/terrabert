@@ -1,0 +1,392 @@
+An embedding is a method of representing data—such as text, images, or sound—as vectors in a high-dimensional space. These vectors are crafted to ensure that the distance between them reflects the similarity of the data they represent. This process typically employs algorithms like word embeddings (e.g., Word2Vec, BERT) for text or neural networks for images. The high-dimensional nature of the vector space, with many components per vector, allows for the representation of complex and nuanced relationships between items. Their similarity is gauged by the distance between these vectors, often measured using methods like Euclidean distance or cosine similarity.
+
+Manticore Search enables k-nearest neighbor (KNN) vector searches using the HNSW library. This functionality is part of the Manticore Columnar Library.
+
+Configuring a table for KNN search
+To run KNN searches, you must first configure your table. It needs to have at least one float_vector attribute, which serves as a data vector. You need to specify the following properties:
+
+knn_type : A mandatory setting; currently, only hnsw is supported.
+knn_dims : A mandatory setting that specifies the dimensions of the vectors being indexed.
+hnsw_similarity : A mandatory setting that specifies the distance function used by the HNSW index. Acceptable values are:
+L2 - Squared L2
+IP - Inner product
+COSINE - Cosine similarity
+hnsw_m : An optional setting that defines the maximum number of outgoing connections in the graph. The default is 16.
+hnsw_ef_construction : An optional setting that defines a construction time/accuracy trade-off.
+‹›
+SQL
+
+create table test ( title text, image_vector float_vector knn_type='hnsw' knn_dims='4' hnsw_similarity='l2' ); 
+‹›
+Response
+Query OK, 0 rows affected (0.01 sec) 
+Inserting vector data
+After creating the table, you need to insert your vector data, ensuring it matches the dimensions you specified when creating the table.
+
+‹›
+SQL
+JSON
+
+insert into test values ( 1, 'yellow bag', (0.653448,0.192478,0.017971,0.339821) ), ( 2, 'white bag', (-0.148894,0.748278,0.091892,-0.095406) ); 
+‹›
+Response
+Query OK, 2 rows affected (0.00 sec) 
+KNN vector search
+Now, you can perform a KNN search using the knn clause in either SQL or JSON format. Both interfaces support the same essential parameters, ensuring a consistent experience regardless of the format you choose:
+
+SQL: select ... from <table name> where knn ( <field>, <k>, <query vector> [,<ef>] )
+JSON:
+POST /search
+{
+    "table": "<table name>",
+    "knn":
+    {
+        "field": "<field>",
+        "query_vector": [<query vector>],
+        "k": <k>,
+        "ef": <ef>
+    }
+} 
+The parameters are:
+
+field : This is the name of the float vector attribute containing vector data.
+k : This represents the number of documents to return and is a key parameter for Hierarchical Navigable Small World (HNSW) indexes. It specifies the quantity of documents that a single HNSW index should return. However, the actual number of documents included in the final results may vary. For instance, if the system is dealing with real-time tables divided into disk chunks, each chunk could return k documents, leading to a total that exceeds the specified k (as the cumulative count would be num_chunks * k ). On the other hand, the final document count might be less than k if, after requesting k documents, some are filtered out based on specific attributes. It's important to note that the parameter k does not apply to ramchunks. In the context of ramchunks, the retrieval process operates differently, and thus, the k parameter's effect on the number of documents returned is not applicable.
+query_vector : This is the search vector.
+ef : optional size of the dynamic list used during the search. A higher ef leads to more accurate but slower search.
+Documents are always sorted by their distance to the search vector. Any additional sorting criteria you specify will be applied after this primary sort condition. For retrieving the distance, there is a built-in function called knn_dist().
+
+‹›
+SQL
+JSON
+
+select id, knn_dist() from test where knn ( image_vector, 5, (0.286569,-0.031816,0.066684,0.032926), 2000 ); 
+‹›
+Response
++------+------------+
+| id   | knn_dist() |
++------+------------+
+|    1 | 0.28146550 |
+|    2 | 0.81527930 |
++------+------------+
+2 rows in set (0.00 sec) 
+Find similar docs by id
+NOTE: Finding similar documents by id requires Manticore Buddy. If it doesn't work, make sure Buddy is installed.
+
+Finding documents similar to a specific one based on its unique ID is a common task. For instance, when a user views a particular item, Manticore Search can efficiently identify and display a list of items that are most similar to it in the vector space. Here's how you can do it:
+
+SQL: select ... from <table name> where knn ( <field>, <k>, <document id> )
+JSON:
+POST /search
+{
+    "table": "<table name>",
+    "knn":
+    {
+        "field": "<field>",
+        "doc_id": <document id>,
+        "k": <k>
+    }
+} 
+The parameters are:
+
+field : This is the name of the float vector attribute containing vector data.
+k : This represents the number of documents to return and is a key parameter for Hierarchical Navigable Small World (HNSW) indexes. It specifies the quantity of documents that a single HNSW index should return. However, the actual number of documents included in the final results may vary. For instance, if the system is dealing with real-time tables divided into disk chunks, each chunk could return k documents, leading to a total that exceeds the specified k (as the cumulative count would be num_chunks * k ). On the other hand, the final document count might be less than k if, after requesting k documents, some are filtered out based on specific attributes. It's important to note that the parameter k does not apply to ramchunks. In the context of ramchunks, the retrieval process operates differently, and thus, the k parameter's effect on the number of documents returned is not applicable.
+document id : Document ID for KNN similarity search.
+‹›
+SQL
+JSON
+
+select id, knn_dist() from test where knn ( image_vector, 5, 1 ); 
+‹›
+Response
++------+------------+
+| id   | knn_dist() |
++------+------------+
+|    2 | 0.81527930 |
++------+------------+
+1 row in set (0.00 sec) 
+Filtering KNN vector search results
+Manticore also supports additional filtering of documents returned by the KNN search, either by full-text matching, attribute filters, or both.
+
+‹›
+SQL
+JSON
+
+select id, knn_dist() from test where knn ( image_vector, 5, (0.286569,-0.031816,0.066684,0.032926) ) and match('white') and id < 10; 
+‹›
+Response
++------+------------+
+| id   | knn_dist() |
++------+------------+
+|    2 | 0.81527930 |
++------+------------+
+1 row in set (0.00 sec) 
+Updating table schema
+Updating table schema in RT mode
+ALTER TABLE table ADD COLUMN column_name [{INTEGER|INT|BIGINT|FLOAT|BOOL|MULTI|MULTI64|JSON|STRING|TIMESTAMP|TEXT [INDEXED [ATTRIBUTE]]}] [engine='columnar']
+
+ALTER TABLE table DROP COLUMN column_name
+
+ALTER TABLE table MODIFY COLUMN column_name bigint
+This feature only supports adding one field at a time for RT tables or the expansion of an int column to bigint. The supported data types are:
+
+int - integer attribute
+timestamp - timestamp attribute
+bigint - big integer attribute
+float - float attribute
+bool - boolean attribute
+multi - multi-valued integer attribute
+multi64 - multi-valued bigint attribute
+json - json attribute
+string / text attribute / string attribute - string attribute
+text / text indexed stored / string indexed stored - full-text indexed field with original value stored in docstore
+text indexed / string indexed - full-text indexed field, indexed only (the original value is not stored in docstore)
+text indexed attribute / string indexed attribute - full text indexed field + string attribute (not storing the original value in docstore)
+text stored / string stored - the value will be only stored in docstore, not full-text indexed, not a string attribute
+adding engine='columnar' to any attribute (except for json) will make it stored in the columnar storage
+Important notes:
+It's recommended to backup table files before ALTERing it to avoid data corruption in case of a sudden power interruption or other similar issues.
+Querying a table is impossible while a column is being added.
+Newly created attribute's values are set to 0.
+ALTER will not work for distributed tables and tables without any attributes.
+You can't delete the id column.
+When dropping a field which is both a full-text field and a string attribute the first ALTER DROP drops the attribute, the second one drops the full-text field.
+Adding/dropping full-text field is only supported in the RT mode.
+‹›
+Example
+
+
+mysql> desc rt;
++------------+-----------+
+| Field      | Type      |
++------------+-----------+
+| id         | bigint    |
+| text       | field     |
+| group_id   | uint      |
+| date_added | timestamp |
++------------+-----------+
+
+mysql> alter table rt add column test integer;
+
+mysql> desc rt;
++------------+-----------+
+| Field      | Type      |
++------------+-----------+
+| id         | bigint    |
+| text       | field     |
+| group_id   | uint      |
+| date_added | timestamp |
+| test       | uint      |
++------------+-----------+
+
+mysql> alter table rt drop column group_id;
+
+mysql> desc rt;
++------------+-----------+
+| Field      | Type      |
++------------+-----------+
+| id         | bigint    |
+| text       | field     |
+| date_added | timestamp |
+| test       | uint      |
++------------+-----------+
+
+mysql> alter table rt add column title text indexed;
+
+mysql> desc rt;
++------------+-----------+------------+
+| Field      | Type      | Properties |
++------------+-----------+------------+
+| id         | bigint    |            |
+| text       | text      | indexed    |
+| title      | text      | indexed    |
+| date_added | timestamp |            |
+| test       | uint      |            |
++------------+-----------+------------+
+
+mysql> alter table rt add column title text attribute;
+
+mysql> desc rt;
++------------+-----------+------------+
+| Field      | Type      | Properties |
++------------+-----------+------------+
+| id         | bigint    |            |
+| text       | text      | indexed    |
+| title      | text      | indexed    |
+| date_added | timestamp |            |
+| test       | uint      |            |
+| title      | string    |            |
++------------+-----------+------------+
+
+mysql> alter table rt drop column title;
+
+mysql> desc rt;
++------------+-----------+------------+
+| Field      | Type      | Properties |
++------------+-----------+------------+
+| id         | bigint    |            |
+| text       | text      | indexed    |
+| title      | text      | indexed    |
+| date_added | timestamp |            |
+| test       | uint      |            |
++------------+-----------+------------+
+mysql> alter table rt drop column title;
+
+mysql> desc rt;
++------------+-----------+------------+
+| Field      | Type      | Properties |
++------------+-----------+------------+
+| id         | bigint    |            |
+| text       | text      | indexed    |
+| date_added | timestamp |            |
+| test       | uint      |            |
++------------+-----------+------------+
+Updating table FT settings in RT mode
+ALTER TABLE table ft_setting='value'[, ft_setting2='value']
+You can use ALTER to modify the full-text settings of your table in RT mode. However, it only affects new documents and not existing ones. Example:
+
+create a table with a full-text field and charset_table that allows only 3 searchable characters: a, b and c.
+then we insert document 'abcd' and find it by query abcd, the d just gets ignored since it's not in the charset_table array
+then we understand, that we want d to be searchable too, so we add it with help of ALTER
+but the same query where match('abcd') still says it searched by abc, because the existing document remembers previous contents of charset_table
+then we add another document abcd and search by abcd again
+now it finds the both documents and show meta says it used two keywords: abc (to find the old document) and abcd (for the new one).
+‹›
+Example
+
+mysql> create table rt(title text) charset_table='a,b,c';
+
+mysql> insert into rt(title) values('abcd');
+
+mysql> select * from rt where match('abcd');
++---------------------+-------+
+| id                  | title |
++---------------------+-------+
+| 1514630637682688054 | abcd  |
++---------------------+-------+
+
+mysql> show meta;
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| total         | 1     |
+| total_found   | 1     |
+| time          | 0.000 |
+| keyword[0]    | abc   |
+| docs[0]       | 1     |
+| hits[0]       | 1     |
++---------------+-------+
+
+mysql> alter table rt charset_table='a,b,c,d';
+mysql> select * from rt where match('abcd');
++---------------------+-------+
+| id                  | title |
++---------------------+-------+
+| 1514630637682688054 | abcd  |
++---------------------+-------+
+
+mysql> show meta
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| total         | 1     |
+| total_found   | 1     |
+| time          | 0.000 |
+| keyword[0]    | abc   |
+| docs[0]       | 1     |
+| hits[0]       | 1     |
++---------------+-------+
+
+mysql> insert into rt(title) values('abcd');
+mysql> select * from rt where match('abcd');
++---------------------+-------+
+| id                  | title |
++---------------------+-------+
+| 1514630637682688055 | abcd  |
+| 1514630637682688054 | abcd  |
++---------------------+-------+
+
+mysql> show meta;
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| total         | 2     |
+| total_found   | 2     |
+| time          | 0.000 |
+| keyword[0]    | abc   |
+| docs[0]       | 1     |
+| hits[0]       | 1     |
+| keyword[1]    | abcd  |
+| docs[1]       | 1     |
+| hits[1]       | 1     |
++---------------+-------+
+Renaming a real-time table
+You can change the name of a real-time table in RT mode.
+
+ALTER TABLE table_name RENAME new_table_name;
+NOTE: Renaming a real-time table requires Manticore Buddy. If it doesn't work, make sure Buddy is installed.
+
+‹›
+Example
+
+ALTER TABLE table_name RENAME new_table_name;
+‹›
+Response
+Query OK, 0 rows affected (0.00 sec)
+Updating table FT settings in plain mode
+ALTER TABLE table RECONFIGURE
+ALTER can also reconfigure an RT table in the plain mode, so that new tokenization, morphology and other text processing settings from the configuration file take effect for new documents. Note, that the existing document will be left intact. Internally, it forcibly saves the current RAM chunk as a new disk chunk and adjusts the table header, so that new documents are tokenized using the updated full-text settings.
+
+‹›
+Example
+
+mysql> show table rt settings;
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| settings      |       |
++---------------+-------+
+1 row in set (0.00 sec)
+
+mysql> alter table rt reconfigure;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> show table rt settings;
++---------------+----------------------+
+| Variable_name | Value                |
++---------------+----------------------+
+| settings      | morphology = stem_en |
++---------------+----------------------+
+1 row in set (0.00 sec)
+Rebuilding a secondary index
+ALTER TABLE table REBUILD SECONDARY
+You can also use ALTER to rebuild secondary indexes in a given table. Sometimes, a secondary index can be disabled for the entire table or for one or multiple attributes within the table:
+
+When an attribute is updated, its secondary index gets disabled.
+If Manticore loads a table with an old version of secondary indexes that is no longer supported, the secondary indexes will be disabled for the entire table.
+ALTER TABLE table REBUILD SECONDARY rebuilds secondary indexes from attribute data and enables them again.
+
+Additionally, an old version of secondary indexes may be supported but will lack certain features. REBUILD SECONDARY can be used to update secondary indexes.
+
+‹›
+Example
+
+ALTER TABLE rt REBUILD SECONDARY;
+‹›
+Response
+Query OK, 0 rows affected (0.00 sec)
+Changing a distributed table
+To change the list of local or remote nodes in a distributed table, follow the same syntax you used to create the table. Just replace CREATE with ALTER in the command and remove type='distributed':
+
+ALTER TABLE `distr_table_name` [[local='local_table_name'], [agent='host:port:remote_table'] ... ]
+NOTE: Renaming a real-time table requires Manticore Buddy. If it doesn't work, make sure Buddy is installed.
+
+‹›
+Example
+
+ALTER TABLE local_dist local='index1' local='index2' agent='127.0.0.1:9312:remote_table';
+Functions
+Mathematical functions
+ABS()
+Returns the absolute value of the argument.
+
+ATAN2()

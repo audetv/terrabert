@@ -1,0 +1,5 @@
+.pytest_cache
+__pycache__
+my_bert_model
+my_bert_tokenizer
+my_retrained_tokenizer
